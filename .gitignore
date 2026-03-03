@@ -27,5 +27,8 @@ build/
 .DS_Store
 Thumbs.db
 
-# requirements.txt (опционально, если не нужен в репо)
-# requirements.txt
+# Результаты
+*.html
+
+# Переменные окружения (секретные данные)
+.env

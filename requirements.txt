@@ -11,3 +11,4 @@ pillow==12.1.1
 protobuf==7.34.0
 pyreadline3==3.5.4
 sympy==1.14.0
+python-dotenv==1.0.0
