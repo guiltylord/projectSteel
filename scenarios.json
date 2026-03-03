@@ -1,0 +1,30 @@
+{
+    "search_debt": {
+      "url": "https://fssp.gov.ru/iss/ip_search",
+      "actions": [
+        {
+          "type": "fill",
+          "selector": "input.css-x527hy-Textfield",
+          "value": "FIO"
+        },
+        {
+          "type": "click",
+          "selector": "input.vs__search"
+        },
+        {
+          "type": "fill",
+          "selector": "input.vs__search",
+          "value": "REGION"
+        },
+        {
+          "type": "click",
+          "selector": ".css-1dem7su-Button"
+        }
+      ],
+      "captcha": {
+        "image": ".css-1i8blrw-CaptchaImage img",
+        "input": ".css-ltkyij-Textfield",
+        "submit": ".css-s2y2s8-Button"
+      }
+    }
+  }
