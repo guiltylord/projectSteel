@@ -100,9 +100,23 @@ def run_workflow():
         page.goto(URL, wait_until="networkidle")
 
         # 1. ФИО
-        print("[*] Ввод первичных данных...")
-        print(S_FIO, D_FIO)
-        page.locator(S_FIO).first.type(D_FIO, delay=60)
+        fio_field = page.locator(S_FIO).first
+        
+        # Технологичное ожидание: ждем пока элемент станет кликабельным
+        fio_field.wait_for(state="visible")
+        
+        # Пытаемся заполнить, пока значение не подтвердится
+        attempts = 0
+        while fio_field.input_value() != D_FIO and attempts < 10:
+            fio_field.click()
+            fio_field.fill("") # Быстрая очистка
+            fio_field.type(D_FIO, delay=40) # Ввод с эмуляцией клавиш
+            attempts += 1
+            if fio_field.input_value() != D_FIO:
+                page.wait_for_timeout(200) # Короткая пауза между попытками
+        
+        if attempts >= 10:
+            print("[!] Ошибка: Не удалось зафиксировать данные в поле ФИО")
 
         # 2. Регион
         print("[*] Настройка параметров...")
