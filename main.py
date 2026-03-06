@@ -18,8 +18,8 @@ S_DT = os.getenv("C5")
 S_TRG = os.getenv("C6")
 S_INP = os.getenv("C7")
 S_IMG = os.getenv("C8")
-S_TRY = int(os.getenv("C10", "5"))
-S_BTN = os.getenv("C11")
+S_TRY = int(os.getenv("C9", "5"))
+S_BTN = os.getenv("C10")
 
 # Данные для ввода из окружения
 DATA_1 = os.getenv("D1")
