@@ -4,90 +4,77 @@ import ddddocr
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
+# Инициализация окружения и распознавателя
 load_dotenv()
 solver = ddddocr.DdddOcr(show_ad=False)
 
-# Селекторы
-URL = os.getenv("C20")
-S_FIO = os.getenv("C21")      # Поле ФИО
-S_REGION = os.getenv("C22")   # Выпадающий список региона
-S_BTN = os.getenv("C23")      # Кнопка поиска
-S_DROPDOWN = os.getenv("C24") # Опция dropdown
-S_MODAL = os.getenv("C25")    # Модалка капчи
-S_IMG = os.getenv("C26")      # Изображение капчи
-S_INPUT = os.getenv("C27")    # Поле ввода кода
-S_SUBMIT = os.getenv("C28")   # Кнопка Отправить
-S_REFRESH = os.getenv("C29")  # Кнопка Обновить
-MAX_T = int(os.getenv("C30", "10"))
+# Считывание абстрактной конфигурации из .env
+U_TARGET = os.getenv("C20")
+S_PRM_INP = os.getenv("C21")
+S_LST_INP = os.getenv("C22")
+S_PRM_BTN = os.getenv("C23")
+S_LST_OPT = os.getenv("C24")
+S_MDL_CON = os.getenv("C25")
+S_MDL_IMG = os.getenv("C26")
+S_MDL_INP = os.getenv("C27")
+S_MDL_SUB = os.getenv("C28")
+S_MDL_REF = os.getenv("C29")
+MAX_TRIES = int(os.getenv("C30", "10"))
 
-# Данные
-D_FIO = os.getenv("D21")
-D_REGION = os.getenv("D22")
+# Данные для обработки
+V_STR_1 = os.getenv("D21")
+V_STR_2 = os.getenv("D22")
 
-def process_challenge(page):
-    print("\n[DEBUG] Ищу окно верификации...")
+def force_input(page, selector, value):
+    """
+    Заполняет поле и принудительно рассылает 
+    события (input, change, blur) для синхронизации с React/Vue.
+    """
+    target = page.locator(selector).first
+    target.wait_for(state="visible")
+    target.fill(value)
+    # Инъекция JS для мгновенного обновления внутреннего состояния сайта
+    page.evaluate(f"""
+        (sel) => {{
+            const el = document.querySelector(sel);
+            if (el) {{
+                ['input', 'change', 'blur'].forEach(ev => 
+                    el.dispatchEvent(new Event(ev, {{ bubbles: true }}))
+                );
+            }}
+        }}
+    """, selector)
+
+def execute_verification(page):
+    """Модуль прохождения графического испытания"""
+    print("[*] Обработка запроса верификации...")
     try:
-        # 1. Ждем модалку
-        page.wait_for_selector(S_MODAL, state="visible", timeout=10000)
-
-        # 2. Ищем картинку агрессивно
-        # Сначала пробуем твой селектор, если нет - любую картинку в модалке
-        img_node = page.locator(S_MODAL).locator("img").first
-
-        # Ждем, пока у картинки появится нормальный src (не пустой)
-        page.wait_for_function(
-            "el => el.src && el.src.length > 10",
-            arg=img_node.element_handle(),
-            timeout=5000
-        )
-
-        # Делаем скриншот
+        # Ожидание появления контейнера
+        page.wait_for_selector(S_MDL_CON, state="visible", timeout=10000)
+        
+        # Захват и проверка стабильности изображения
+        img_node = page.locator(S_MDL_IMG).first
+        page.wait_for_function("el => el.src && el.src.length > 10", arg=img_node.element_handle())
+        
+        # Получение токена
         img_bytes = img_node.screenshot()
-        with open("captured.png", "wb") as f:
-            f.write(img_bytes)
-
-        if len(img_bytes) < 500:
-            print("[!] Скриншот слишком маленький, что-то не так.")
-            return False
-
-        # 3. Распознаем
         token = solver.classification(img_bytes).strip()
-        print(f"[>] Результат распознавания: '{token}'")
+        print(f"   [>] Token: {token}")
 
         if not token:
-            print("[!] Код не распознан. Жму обновить...")
-            page.locator(S_REFRESH).first.click()
-            time.sleep(2)
+            page.locator(S_MDL_REF).first.click()
             return False
 
-        # 4. Ввод
-        print(f"[*] Ввожу код в поле...")
-        inp = page.locator(S_INPUT).filter(visible=True).first
-        inp.click()
-        page.keyboard.press("Control+A")
-        page.keyboard.press("Backspace")
-        inp.type(token, delay=100)
+        # Ввод токена с использованием форсированного события
+        force_input(page, S_MDL_INP, token)
 
-        # 5. Клик Отправить
-        print("[*] Нажимаю кнопку подтверждения...")
-        page.locator(S_SUBMIT).filter(has_text="Отправить").first.click()
-
+        # Подтверждение
+        page.locator(S_MDL_SUB).filter(has_text="Отправить").first.click()
         time.sleep(4)
-
-        # Если модалка пропала - победа
-        if not page.is_visible(S_MODAL):
-            return True
-        else:
-            print("[-] Код не подошел. Обновляю...")
-            page.locator(S_REFRESH).first.click()
-            time.sleep(2)
-            return False
-            
+        
+        return not page.is_visible(S_MDL_INP)
     except Exception as e:
-        print(f"[!] Ошибка в модуле верификации: {e}")
-        # На всякий случай проверим, может мы уже зашли
-        if "results" in page.content() or "empty" in page.content():
-            return True
+        print(f"   [!] Verification module error: {e}")
         return False
 
 def run_workflow():
@@ -96,67 +83,55 @@ def run_workflow():
         context = browser.new_context(viewport={'width': 1280, 'height': 1000})
         page = context.new_page()
 
-        print(f"[*] Целевой URL: {URL}")
-        page.goto(URL, wait_until="networkidle")
+        print(f"[*] Connecting to {U_TARGET}...")
+        page.goto(U_TARGET, wait_until="networkidle")
 
-        # 1. ФИО
-        fio_field = page.locator(S_FIO).first
-        
-        # Технологичное ожидание: ждем пока элемент станет кликабельным
-        fio_field.wait_for(state="visible")
-        
-        # Пытаемся заполнить, пока значение не подтвердится
-        attempts = 0
-        while fio_field.input_value() != D_FIO and attempts < 10:
-            fio_field.click()
-            fio_field.fill("") # Быстрая очистка
-            fio_field.type(D_FIO, delay=40) # Ввод с эмуляцией клавиш
-            attempts += 1
-            if fio_field.input_value() != D_FIO:
-                page.wait_for_timeout(200) # Короткая пауза между попытками
-        
-        if attempts >= 10:
-            print("[!] Ошибка: Не удалось зафиксировать данные в поле ФИО")
+        # 1. Ввод первичных строковых данных
+        print("[*] Processing primary inputs...")
+        force_input(page, S_PRM_INP, V_STR_1)
 
-        # 2. Регион
-        print("[*] Настройка параметров...")
-        lst = page.locator(S_REGION).first
-        lst.click()
-        lst.type(D_REGION, delay=100)
-
+        # 2. Обработка списков и параметров
+        print("[*] Configuring parameters...")
+        list_trigger = page.locator(S_LST_INP).first
+        list_trigger.click()
+        list_trigger.type(V_STR_2, delay=50)
+        
         try:
-            page.wait_for_selector(S_DROPDOWN, timeout=5000)
-            page.locator(S_DROPDOWN).first.click()
+            # Ожидание конкретного элемента в выпадающем списке
+            page.wait_for_selector(S_LST_OPT, timeout=5000)
+            page.locator(S_LST_OPT).first.click()
         except:
             page.keyboard.press("Enter")
 
-        time.sleep(1)
+        # 3. Запуск процесса (клик по кнопке поиска)
+        print("[*] Triggering main process...")
+        page.locator(S_PRM_BTN).filter(has_text="Найти").first.click()
 
-        # 3. Триггер поиска
-        print("[*] Запуск процесса...")
-        page.locator(S_BTN).filter(has_text="Найти").first.click()
-
-        # 4. Прохождение проверок
-        success = False
+        # 4. Проверка на необходимость верификации
         time.sleep(3)
-        
+        status = False
         if "results" in page.content() or "empty" in page.content():
-            success = True
+            status = True
         else:
-            for i in range(MAX_T):
-                print(f"\n--- Попытка #{i+1} ---")
-                if process_challenge(page):
-                    success = True
+            for attempt in range(MAX_TRIES):
+                if execute_verification(page):
+                    status = True
                     break
+                print(f"   [-] Attempt {attempt+1} failed, retrying...")
+                try:
+                    page.locator(S_MDL_REF).first.click()
+                    time.sleep(2)
+                except: pass
 
-        if success:
-            print("\n[SUCCESS] Процесс завершен.")
+        # 5. Сбор и сохранение выходных данных
+        if status:
+            print("[SUCCESS] Data stream accessed.")
             time.sleep(5)
-            with open("output_final.html", "w", encoding="utf-8") as f:
+            with open("workflow_output.html", "w", encoding="utf-8") as f:
                 f.write(page.content())
-            print("[DONE] Данные в output_final.html")
+            print("[DONE] Result saved to workflow_output.html")
         else:
-            print("\n[FAIL] Верификация не пройдена.")
+            print("[FAIL] Workflow blocked by security challenge.")
 
         browser.close()
 
