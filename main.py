@@ -1,3 +1,6 @@
+# TODO: сделать проверку капчи, так вроде все воркается
+
+
 import os
 import sys
 import json
@@ -9,52 +12,99 @@ from playwright.sync_api import sync_playwright
 # Инициализация OCR
 solver = ddddocr.DdddOcr(show_ad=False)
 
+def resolve_locator(page, sel):
+    """Превращает кастомные селекторы в локаторы Playwright"""
+    if not sel:
+        return None
+    try:
+        if sel.startswith("role:"):
+            # Пример: role:button[name='Найти']
+            parts = sel.replace("role:", "").split("[name=")
+            role = parts[0].strip()
+            if len(parts) > 1:
+                name = parts[1].replace("]", "").strip().strip("'\"")
+                return page.get_by_role(role, name=name)
+            return page.get_by_role(role)
+            
+        elif sel.startswith("placeholder:"):
+            text = sel.replace("placeholder:", "").strip()
+            return page.get_by_placeholder(text)
+            
+        elif sel.startswith("text:"):
+            text = sel.replace("text:", "").strip()
+            return page.get_by_text(text)
+            
+        # Обычный CSS
+        return page.locator(sel)
+    except Exception as e:
+        print(f"   [!] Ошибка резолвера для '{sel}': {e}")
+        return None
+
 def force_input(page, selector, value):
-    """Технологичный ввод: клик + печать + события"""
+    """Ввод с принудительными событиями для React"""
     if not value: return
-    target = page.locator(selector).filter(visible=True).first
+    
+    target = resolve_locator(page, selector)
+    if target is None: return
+    
+    # Берем первый видимый
+    target = target.filter(visible=True).first
     target.wait_for(state="visible", timeout=10000)
+    
     target.click()
     target.fill("")
-    target.type(str(value), delay=50)
-    # Принудительный вызов событий для React
-    page.evaluate(f"()=>{{const e=document.querySelector('{selector}'); if(e){{e.dispatchEvent(new Event('input',{{bubbles:true}}));e.dispatchEvent(new Event('change',{{bubbles:true}}));}}}}")
+    target.type(str(value), delay=100)
+    
+    # Пинаем React
+    target.evaluate("""(el) => { 
+        ['input', 'change', 'blur'].forEach(v => el.dispatchEvent(new Event(v, {bubbles: true}))); 
+    }""")
 
 def solve_security(page, cap_cfg):
     """Модуль прохождения капчи"""
     print("   [*] Ожидание окна проверки...")
+    
+    s_inp = cap_cfg.get('input')
+    s_img = cap_cfg.get('image')
+    s_sub = cap_cfg.get('submit')
+    
+    if not s_inp or not s_img or not s_sub:
+        print("   [!] Ошибка конфига: не хватает селекторов капчи в JSON.")
+        return False
+
     try:
-        # Ждем именно видимый инпут капчи
-        page.wait_for_selector(cap_cfg['input'], state="visible", timeout=10000)
+        # Ждем инпут
+        input_loc = resolve_locator(page, s_inp)
+        input_loc.first.wait_for(state="visible", timeout=10000)
         time.sleep(1.5)
         
-        # Находим картинку
-        img_node = page.locator(cap_cfg['image']).filter(visible=True).first
-        page.wait_for_function("el => el.src && el.src.length > 10", arg=img_node.element_handle())
+        # Ждем картинку
+        img_loc = resolve_locator(page, s_img).filter(visible=True).first
+        page.wait_for_function("el => el.src && el.src.length > 10", arg=img_loc.element_handle())
         
-        img_bytes = img_node.screenshot()
+        # Скрин и OCR
+        img_bytes = img_loc.screenshot()
         token = solver.classification(img_bytes).strip()
-        print(f"   [>] OCR Результат: {token}")
+        print(f"   [>] OCR Результат: '{token}'")
 
         if not token: return False
 
-        # Ввод в видимое поле
-        force_input(page, cap_cfg['input'], token)
+        # Ввод
+        force_input(page, s_inp, token)
 
-        # Жмем "Отправить" внутри модалки
-        page.locator(cap_cfg['submit']).filter(has_text="Отправить").filter(visible=True).first.click()
+        # Отправка
+        btn_loc = resolve_locator(page, s_sub).filter(visible=True).first
+        btn_loc.click()
         
         time.sleep(4)
-        return not page.is_visible(cap_cfg['input'])
+        
+        # Если инпут пропал с экрана - значит капча пройдена
+        return not input_loc.first.is_visible()
     except Exception as e:
         print(f"   [!] Ошибка в модуле верификации: {e}")
         return False
 
 def run_engine(scenario_name, input_data):
-    """
-    scenario_name: имя ключа из JSON (напр. fssp_new)
-    input_data: список строк (напр. ["Абакумов...", "Москва"])
-    """
     if not os.path.exists("scenarios.json"):
         print("[!] Файл scenarios.json не найден!")
         return
@@ -75,13 +125,13 @@ def run_engine(scenario_name, input_data):
 
         print(f"[*] Переход на {cfg['url']}...")
         page.goto(cfg['url'], wait_until="domcontentloaded")
+        time.sleep(2)
 
         # --- ВЫПОЛНЕНИЕ ШАГОВ ---
         for step in cfg.get('actions', []):
             action_type = step['type']
             selector = step['selector']
             
-            # Извлекаем данные из массива консоли по индексу
             val = ""
             if 'arg_index' in step:
                 idx = step['arg_index']
@@ -92,41 +142,43 @@ def run_engine(scenario_name, input_data):
                     print(f"[*] Ввод '{val}' в {selector}...")
                     force_input(page, selector, val)
                 
-                elif action_type == 'dropdown':
-                    print(f"[*] Выбор '{val}' в списке {selector}...")
-                    reg_input = page.locator(selector).first
-                    reg_input.click()
-                    reg_input.type(val, delay=100)
-                    try:
-                        opt_sel = step['opt_selector']
-                        page.wait_for_selector(opt_sel, state="visible", timeout=5000)
-                        page.locator(opt_sel).first.click()
-                    except:
-                        page.keyboard.press("Enter")
-                
                 elif action_type == 'click':
                     print(f"[*] Клик по {selector}...")
-                    page.locator(selector).first.click()
+                    target = resolve_locator(page, selector)
+                    if target: target.filter(visible=True).first.click()
+                    
+                elif action_type == 'press':
+                    key_name = step.get('key', 'Enter')
+                    print(f"[*] Нажатие клавиши '{key_name}' на {selector}...")
+                    target = resolve_locator(page, selector)
+                    if target: target.filter(visible=True).first.press(key_name)
                 
                 time.sleep(1)
             except Exception as e:
-                print(f"[!] Ошибка шага: {e}")
+                print(f"[!] Ошибка шага {action_type}: {e}")
 
         # --- КАПЧА ---
-        time.sleep(2)
+        print("\n[*] Проверка состояния защиты...")
+        time.sleep(3)
         success = False
+        
         if "results" in page.content() or "empty" in page.content():
+            print("[*] Результаты доступны без капчи.")
             success = True
         elif 'captcha' in cfg:
-            cap = cfg['captcha']
-            for i in range(cap.get('max_tries', 5)):
+            cap_cfg = cfg['captcha']
+            for i in range(cap_cfg.get('max_tries', 5)):
                 print(f"\n--- Попытка #{i+1} ---")
-                if solve_security(page, cap):
+                if solve_security(page, cap_cfg):
                     success = True
                     break
+                
+                # Обновление капчи
                 try:
-                    page.locator(cap['refresh']).first.click()
-                    time.sleep(2)
+                    ref_sel = cap_cfg.get('refresh')
+                    if ref_sel:
+                        resolve_locator(page, ref_sel).filter(visible=True).first.click()
+                        time.sleep(2)
                 except: pass
 
         # --- ИТОГ ---
@@ -139,12 +191,12 @@ def run_engine(scenario_name, input_data):
         else:
             print("\n[FAIL] Не удалось пробиться.")
 
-        time.sleep(2)
+        time.sleep(3)
         browser.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Универсальный парсер")
-    parser.add_argument("-s", required=True, help="Имя сценария из scenarios.json")
+    parser.add_argument("-s", required=True, help="Имя сценария из scenarios.json (например fssp_new)")
     parser.add_argument("-d", nargs='+', default=[], help="Данные по порядку. Пример: -d 'Иванов' 'Москва'")
     
     args = parser.parse_args()

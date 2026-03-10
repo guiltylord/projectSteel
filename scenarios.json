@@ -3,26 +3,40 @@
       "url": "https://fssp.gov.ru/iss/ip_search",
       "actions": [
         {
+          "type": "click",
+          "selector": "role:textbox"
+        },
+        {
           "type": "fill",
-          "selector": "input.css-x527hy-Textfield",
+          "selector": "role:textbox",
           "arg_index": 0
         },
         {
-          "type": "dropdown",
-          "selector": "input.vs__search",
-          "opt_selector": ".vs__dropdown-option",
+          "type": "click",
+          "selector": "placeholder:Все регионы"
+        },
+        {
+          "type": "fill",
+          "selector": "placeholder:Все регионы",
           "arg_index": 1
         },
         {
+          "type": "press",
+          "selector": "placeholder:Все регионы",
+          "key": "Enter"
+        },
+        {
           "type": "click",
-          "selector": "button.css-1dem7su-Button"
+          "selector": "role:button[name='Найти']"
+        },
+        {
+          "type": "click",
+          "selector": "role:textbox[name='Введите код']"
         }
       ],
       "captcha": {
-        "image": ".css-1i8blrw-CaptchaImage img",
-        "input": "input.css-ltkyij-Textfield",
-        "submit": ".css-s2y2s8-Button",
-        "refresh": ".css-xeatex-CaptchaRefresh button",
+        "input": "role:textbox[name='Введите код']",
+        "submit": "role:button[name='Отправить']",
         "max_tries": 10
       }
     }
