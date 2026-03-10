@@ -1,6 +1,8 @@
 import os
+import sys
 import json
 import time
+import argparse
 import ddddocr
 from playwright.sync_api import sync_playwright
 
@@ -9,25 +11,25 @@ solver = ddddocr.DdddOcr(show_ad=False)
 
 def force_input(page, selector, value):
     """Технологичный ввод: клик + печать + события"""
+    if not value: return
     target = page.locator(selector).filter(visible=True).first
     target.wait_for(state="visible", timeout=10000)
     target.click()
     target.fill("")
-    target.type(value, delay=50)
+    target.type(str(value), delay=50)
     # Принудительный вызов событий для React
     page.evaluate(f"()=>{{const e=document.querySelector('{selector}'); if(e){{e.dispatchEvent(new Event('input',{{bubbles:true}}));e.dispatchEvent(new Event('change',{{bubbles:true}}));}}}}")
 
-def solve_security(page, captcha_cfg):
+def solve_security(page, cap_cfg):
     """Модуль прохождения капчи"""
     print("   [*] Ожидание окна проверки...")
     try:
         # Ждем именно видимый инпут капчи
-        page.wait_for_selector(captcha_cfg['input'], state="visible", timeout=10000)
+        page.wait_for_selector(cap_cfg['input'], state="visible", timeout=10000)
         time.sleep(1.5)
         
         # Находим картинку
-        img_node = page.locator(captcha_cfg['image']).filter(visible=True).first
-        # Проверяем, что картинка загружена
+        img_node = page.locator(cap_cfg['image']).filter(visible=True).first
         page.wait_for_function("el => el.src && el.src.length > 10", arg=img_node.element_handle())
         
         img_bytes = img_node.screenshot()
@@ -37,19 +39,22 @@ def solve_security(page, captcha_cfg):
         if not token: return False
 
         # Ввод в видимое поле
-        force_input(page, captcha_cfg['input'], token)
+        force_input(page, cap_cfg['input'], token)
 
         # Жмем "Отправить" внутри модалки
-        page.locator(captcha_cfg['submit']).filter(has_text="Отправить").filter(visible=True).first.click()
+        page.locator(cap_cfg['submit']).filter(has_text="Отправить").filter(visible=True).first.click()
         
         time.sleep(4)
-        return not page.is_visible(captcha_cfg['input'])
+        return not page.is_visible(cap_cfg['input'])
     except Exception as e:
         print(f"   [!] Ошибка в модуле верификации: {e}")
         return False
 
-def run_scenario(scenario_name):
-    # Читаем конфиг из JSON
+def run_engine(scenario_name, input_data):
+    """
+    scenario_name: имя ключа из JSON (напр. fssp_new)
+    input_data: список строк (напр. ["Абакумов...", "Москва"])
+    """
     if not os.path.exists("scenarios.json"):
         print("[!] Файл scenarios.json не найден!")
         return
@@ -58,13 +63,10 @@ def run_scenario(scenario_name):
         data = json.load(f)
     
     if scenario_name not in data:
-        print(f"[!] Сценарий {scenario_name} не найден в JSON!")
+        print(f"[!] Сценарий '{scenario_name}' не найден в JSON!")
         return
 
     cfg = data[scenario_name]
-    sel = cfg['selectors']
-    inp = cfg['inputs']
-    cap = cfg['captcha']
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
@@ -73,57 +75,67 @@ def run_scenario(scenario_name):
 
         print(f"[*] Переход на {cfg['url']}...")
         page.goto(cfg['url'], wait_until="domcontentloaded")
-        page.wait_for_selector(sel['fio_field'], timeout=20000)
 
-        # 1. Заполняем ФИО
-        print("[*] Заполнение ФИО...")
-        force_input(page, sel['fio_field'], inp['fio'])
+        # --- ВЫПОЛНЕНИЕ ШАГОВ ---
+        for step in cfg.get('actions', []):
+            action_type = step['type']
+            selector = step['selector']
+            
+            # Извлекаем данные из массива консоли по индексу
+            val = ""
+            if 'arg_index' in step:
+                idx = step['arg_index']
+                val = input_data[idx] if idx < len(input_data) else ""
 
-        # 2. Регион
-        print("[*] Выбор региона...")
-        reg_input = page.locator(sel['region_field']).first
-        reg_input.click()
-        reg_input.type(inp['region'], delay=100)
-        
-        try:
-            # Ждем именно строку в списке
-            page.wait_for_selector(sel['region_option'], state="visible", timeout=5000)
-            page.locator(sel['region_option']).first.click()
-            print("      [v] Регион выбран.")
-        except:
-            page.keyboard.press("Enter")
+            try:
+                if action_type == 'fill':
+                    print(f"[*] Ввод '{val}' в {selector}...")
+                    force_input(page, selector, val)
+                
+                elif action_type == 'dropdown':
+                    print(f"[*] Выбор '{val}' в списке {selector}...")
+                    reg_input = page.locator(selector).first
+                    reg_input.click()
+                    reg_input.type(val, delay=100)
+                    try:
+                        opt_sel = step['opt_selector']
+                        page.wait_for_selector(opt_sel, state="visible", timeout=5000)
+                        page.locator(opt_sel).first.click()
+                    except:
+                        page.keyboard.press("Enter")
+                
+                elif action_type == 'click':
+                    print(f"[*] Клик по {selector}...")
+                    page.locator(selector).first.click()
+                
+                time.sleep(1)
+            except Exception as e:
+                print(f"[!] Ошибка шага: {e}")
 
-        # 3. Кнопка Найти
-        print("[*] Поиск...")
-        page.locator(sel['search_btn']).filter(has_text="Найти").first.click()
-
-        # 4. Цикл капчи
+        # --- КАПЧА ---
         time.sleep(2)
         success = False
         if "results" in page.content() or "empty" in page.content():
             success = True
-        else:
-            for i in range(cap['max_tries']):
+        elif 'captcha' in cfg:
+            cap = cfg['captcha']
+            for i in range(cap.get('max_tries', 5)):
                 print(f"\n--- Попытка #{i+1} ---")
                 if solve_security(page, cap):
                     success = True
                     break
-                # Если не прошло - жмем Обновить
                 try:
                     page.locator(cap['refresh']).first.click()
                     time.sleep(2)
                 except: pass
 
-        # 5. Итог
+        # --- ИТОГ ---
         if success:
             print("\n[SUCCESS] Данные получены!")
             time.sleep(5)
-            try:
-                with open("out.html", "w", encoding="utf-8") as f:
-                    f.write(page.content())
-                print("[DONE] Сохранено в out.html")
-            except Exception as e:
-                print(f"[!] Ошибка сохранения: {e}")
+            with open("out.html", "w", encoding="utf-8") as f:
+                f.write(page.content())
+            print("[DONE] Сохранено в out.html")
         else:
             print("\n[FAIL] Не удалось пробиться.")
 
@@ -131,5 +143,10 @@ def run_scenario(scenario_name):
         browser.close()
 
 if __name__ == "__main__":
-    # Вызываем нужный блок из JSON
-    run_scenario("fssp_new")
+    parser = argparse.ArgumentParser(description="Универсальный парсер")
+    parser.add_argument("-s", required=True, help="Имя сценария из scenarios.json")
+    parser.add_argument("-d", nargs='+', default=[], help="Данные по порядку. Пример: -d 'Иванов' 'Москва'")
+    
+    args = parser.parse_args()
+    
+    run_engine(args.s, args.d)
