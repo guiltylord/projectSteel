@@ -15,7 +15,13 @@ def run(plan, data):
             if act['type'] == 'fill':
                 page.locator(act['selector']).fill(val)
             elif act['type'] == 'js_inject':
-                page.evaluate(f"()=>{{document.querySelector('{act['selector']}').value='{val}';}}")
+                page.evaluate(f"""() => {{
+                    const el = document.querySelector('{act['selector']}');
+                    if (el) {{
+                        el.value = '{val}';
+                        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    }}
+                }}""")
             elif act['type'] == 'click':
                 page.click(act['selector'])
             time.sleep(0.5)
@@ -23,12 +29,37 @@ def run(plan, data):
         time.sleep(2)
         if 'captcha' in plan:
             c = plan['captcha']
-            page.wait_for_selector(c['input'])
-            img = page.query_selector(c['image'])
-            token = solver.classification(img.screenshot()).strip()
-            print(f"   [OCR] {token}")
-            page.fill(c['input'], token)
-            page.click(c['submit'])
+            max_tries = c.get('max_tries', 5)
+            
+            for attempt in range(1, max_tries + 1):
+                try:
+                    page.wait_for_selector(c['input'], timeout=10000)
+                    img = page.query_selector(c['image'])
+                    if not img:
+                        print("   [!] Не найдено изображение капчи")
+                        break
+                        
+                    token = solver.classification(img.screenshot()).strip()
+                    print(f"   [OCR] Попытка #{attempt}: {token}")
+                    
+                    page.fill(c['input'], token)
+                    page.click(c['submit'])
+                    time.sleep(3)
+                    
+                    # Проверяем, исчезло ли окно капчи
+                    if not page.is_visible(c['input']):
+                        print("   [+] Капча пройдена!")
+                        break
+                    else:
+                        print("   [-] Капча не принята, обновляем...")
+                        # Кликаем по картинке для обновления
+                        if 'refresh' in c and c['refresh']:
+                            page.click(c['refresh'])
+                            time.sleep(2)
+                            
+                except Exception as e:
+                    print(f"   [!] Ошибка на попытке #{attempt}: {e}")
+                    break
 
         time.sleep(5)
         with open("out_classic.html", "w", encoding="utf-8") as f: f.write(page.content())

@@ -33,14 +33,30 @@ def run(plan, data):
         time.sleep(3)
         if 'captcha' in plan:
             c = plan['captcha']
-            try:
-                page.wait_for_selector(c['input'], state="visible", timeout=10000)
-                img = page.locator(c['image']).filter(visible=True).first
-                token = solver.classification(img.screenshot()).strip()
-                print(f"   [OCR] {token}")
-                page.locator(c['input']).filter(visible=True).fill(token)
-                page.locator(c['submit']).filter(visible=True).first.click()
-            except: print("   [!] Капча не появилась или уже пройдена")
+            max_tries = c.get('max_tries', 10)
+            
+            for attempt in range(1, max_tries + 1):
+                try:
+                    page.wait_for_selector(c['input'], state="visible", timeout=10000)
+                    img = page.locator(c['image']).filter(visible=True).first
+                    token = solver.classification(img.screenshot()).strip()
+                    print(f"   [OCR] Попытка #{attempt}: {token}")
+                    
+                    page.locator(c['input']).filter(visible=True).fill(token)
+                    page.locator(c['submit']).filter(visible=True).first.click()
+                    time.sleep(3)
+                    
+                    if not page.is_visible(c['input']):
+                        print("   [+] Капча пройдена!")
+                        break
+                    else:
+                        print("   [-] Капча не принята, обновляем...")
+                        if 'refresh' in c and c['refresh']:
+                            page.locator(c['refresh']).filter(visible=True).first.click()
+                            time.sleep(2)
+                except Exception as e:
+                    print(f"   [!] Ошибка на попытке #{attempt}: {e}")
+                    break
 
         time.sleep(5)
         with open("out_modern.html", "w", encoding="utf-8") as f: f.write(page.content())
