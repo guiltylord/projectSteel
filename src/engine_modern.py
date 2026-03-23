@@ -23,9 +23,9 @@ def run(plan, data):
                 force_input(page, act['selector'], val)
             elif act['type'] == 'dropdown':
                 page.locator(act['selector']).first.click()
-                page.locator(act['selector']).first.type(val, delay=100)
-                time.sleep(1.5)
-                page.locator(act['opt']).first.click()
+                time.sleep(0.5)
+                page.get_by_role("option", name=val).first.click()
+                time.sleep(1)
             elif act['type'] == 'click':
                 page.locator(act['selector']).filter(visible=True).first.click()
             time.sleep(0.5)

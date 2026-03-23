@@ -1,7 +1,10 @@
 import argparse
 import json
-import importlib
 import sys
+import os
+
+# Добавляем директорию src в путь для импортов
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 def main():
     parser = argparse.ArgumentParser(description="Universal Scraper Controller")
@@ -30,7 +33,7 @@ def main():
             import engine_modern as engine
         else:
             import engine_classic as engine
-        
+
         # 3. Запускаем
         engine.run(plan, args.data)
         print("\n[DONE] Процесс завершен.")

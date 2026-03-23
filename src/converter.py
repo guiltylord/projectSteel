@@ -3,7 +3,7 @@ import json
 
 def parse_codegen(code_text):
     lines = code_text.strip().split('\n')
-    
+
     # 1. Достаем URL
     url = ""
     for line in lines:
@@ -13,17 +13,17 @@ def parse_codegen(code_text):
             break
 
     actions_raw = []
-    
+
     # 2. Вытаскиваем все действия по порядку
     for line in lines:
         line = line.strip()
-        
-        # Ввод текста
+
+        # Ввод текста (fill/type)
         m_fill = re.search(r'page\.(get_by_\w+|locator)\("?([^",)]+)"?(?:,\s*name="?([^")]*)"?)?\)\.(fill|type)\("([^"]+)"\)', line)
         if m_fill:
             method, arg, name, act, val = m_fill.groups()
             sel = f"{method.replace('get_by_', '')}:{arg}" + (f"[name='{name}']" if name else "")
-            actions_raw.append({"type": "force_fill", "selector": sel, "raw": line})
+            actions_raw.append({"type": "fill", "selector": sel, "raw": line})
             continue
 
         # Клики
@@ -32,6 +32,14 @@ def parse_codegen(code_text):
             method, arg, name = m_click.groups()
             sel = f"{method.replace('get_by_', '')}:{arg}" + (f"[name='{name}']" if name else "")
             actions_raw.append({"type": "click", "selector": sel, "raw": line})
+            continue
+
+        # Select/dropdown (select_option)
+        m_select = re.search(r'page\.(get_by_\w+|locator)\("?([^",)]+)"?(?:,\s*name="?([^")]*)"?)?\)\.select_option\("([^"]+)"\)', line)
+        if m_select:
+            method, arg, name, val = m_select.groups()
+            sel = f"{method.replace('get_by_', '')}:{arg}" + (f"[name='{name}']" if name else "")
+            actions_raw.append({"type": "dropdown", "selector": sel, "value": val, "raw": line})
 
     # 3. Интерактивная разметка (Отделяем форму от капчи)
     print("\n=== НАЙДЕННЫЕ ШАГИ ===")
@@ -51,7 +59,7 @@ def parse_codegen(code_text):
     for i in range(split_idx + 1):
         act = actions_raw[i]
         step = {"type": act["type"], "selector": act["selector"]}
-        if act["type"] == "force_fill":
+        if act["type"] in ("fill", "dropdown"):
             step["arg_index"] = arg_count
             arg_count += 1
         final_actions.append(step)
@@ -68,6 +76,7 @@ def parse_codegen(code_text):
     result = {
         "new_generated_site": {
             "url": url,
+            "engine": "modern",
             "actions": final_actions,
             "captcha": captcha
         }

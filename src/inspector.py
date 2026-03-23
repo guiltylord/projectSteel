@@ -3,9 +3,12 @@ import json
 
 scenario = {
     "url": "",
+    "engine": "modern",
     "actions": [],
     "captcha": {"popup": "", "image": "", "input": "", "submit": ""}
 }
+
+_arg_counter = 0
 
 # Скрипт генерации селекторов (внедряется в браузер)
 JS_HELPER = """
@@ -115,26 +118,27 @@ def run_inspector():
                 print(f"   Пойман элемент: <{tag}> {selector}")
 
                 if cmd == 'f':
-                    var_name = input("   Имя переменной для .env (например D1): ").upper()
+                    global _arg_counter
                     scenario['actions'].append({
-                        "type": "fill", 
-                        "selector": selector, 
-                        "value": "os.getenv('" + var_name + "')"
+                        "type": "fill",
+                        "selector": selector,
+                        "arg_index": _arg_counter
                     })
-                    print(f"   [+] Добавлено: Заполнить {selector}")
+                    print(f"   [+] Добавлено: Заполнить {selector} (аргумент #{_arg_counter})")
+                    _arg_counter += 1
 
                 elif cmd == 's':
-                    var_name = input("   Имя переменной для .env (например D5): ").upper()
                     scenario['actions'].append({
-                        "type": "js_fill", 
-                        "selector": selector, 
-                        "value": "os.getenv('" + var_name + "')"
+                        "type": "js_inject",
+                        "selector": selector,
+                        "arg_index": _arg_counter
                     })
-                    print(f"   [+] Добавлено: JS-заполнение {selector}")
+                    print(f"   [+] Добавлено: JS-заполнение {selector} (аргумент #{_arg_counter})")
+                    _arg_counter += 1
 
                 elif cmd == 'c':
                     scenario['actions'].append({
-                        "type": "click", 
+                        "type": "click",
                         "selector": selector
                     })
                     print(f"   [+] Добавлено: Клик по {selector}")
@@ -157,6 +161,7 @@ def run_inspector():
 
     print("\n\n=== ТВОЙ СЦЕНАРИЙ JSON ===")
     print(json.dumps(scenario, indent=2, ensure_ascii=False))
+    print(f"\n[!] Сценарий ожидает {_arg_counter} аргументов после флага -d.")
 
 if __name__ == "__main__":
     run_inspector()
